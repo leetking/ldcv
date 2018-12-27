@@ -1,0 +1,36 @@
+[tool.poetry]
+name = "ldcv"
+version = "1.0.2"
+description = "LangMan Console Version"
+authors = ["leetking <li_tking@163.com>"]
+license = "GPL-3.0"
+readme = "README.rst"
+homepage = "https://github.com/leetking/ldcv"
+repository = "https://github.com/leetking/ldcv"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: GNU General Public License (GPL)",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: English",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.3",
+    "Programming Language :: Python :: 3.4",
+    "Programming Language :: Python :: 3.5",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Topic :: Utilities",
+]
+
+[tool.poetry.dependencies]
+python = "^3.0"
+lxml = "^4.2"
+
+[tool.poetry.dev-dependencies]
+
+[tool.poetry.scripts]
+ldcv = 'ldcv:main'
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"
