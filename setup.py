@@ -4,7 +4,7 @@ import sys
 from setuptools import setup
 
 # dependences
-setup_requires = ['setuptools_scm']
+setup_requires = []
 if sys.argv[-1] in ('sdist', 'bdist_wheel'):
     setup_requires.append('setuptools-markdown')
 
@@ -28,7 +28,6 @@ setup(
     },
     setup_requires = setup_requires,
     install_requires = install_requires,
-    use_scm_version = True,
     classifiers = [
         "Development Status :: 4 - Beta",
         "License :: OSI Approved :: GNU General Public License (GPL)",
