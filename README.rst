@@ -51,5 +51,5 @@ Thanks
 .. _LongMan: https://www.ldoceonline.com/
 .. _ydcv: https://github.com/felixonmars/ydcv
 .. _lxml: https://lxml.de/
-.. |Build| image:: https://img.shields.io/badge/build__with-poetry-pink.svg?style=flat-square&logo=appveyor
+.. |Build| image:: https://img.shields.io/badge/build_with-poetry-pink.svg?style=flat-square&logo=appveyor
    :target: https://github.com/sdispater/poetry
