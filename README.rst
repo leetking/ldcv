@@ -4,12 +4,14 @@ ldcv
 
 A console version LongMan_ dictionary.
 
+
 Usage
 -----
 
 .. code-block:: text
 
-   usage: ldcv [-h] [-f] [--color {always,auto,never}] [words [words ...]]
+   usage: ldcv.py [-h] [-f] [--color {always,auto,never}] [-j]
+                  [words [words ...]]
 
    LongMan Console Version
 
@@ -18,27 +20,33 @@ Usage
 
    optional arguments:
      -h, --help            show this help message and exit
-     -f, --full            print verbose explantions
+     -f, --full            print verbose explanations. Default to print first
+                           three explanations
      --color {always,auto,never}
                            colorize the output. Default to "auto" or can be
                            "never" or "always"
+     -j, --json            dump the explanation with JSON style
+
 
 Installation
 ------------
 
-.. code-block:: bash
+.. code-block:: shell
 
-   pip install ldcv
+   $ pip install ldcv
+
 
 Enviroment or dependences
 -------------------------
- - Python (3.x)
- - lxml_
+
+- Python (3.x)
+- lxml_
+
 
 Thanks
 ------
 
- - ydcv_
+- ydcv_
 
 .. _LongMan: https://www.ldoceonline.com/
 .. _ydcv: https://github.com/felixonmars/ydcv

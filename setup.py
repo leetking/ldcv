@@ -4,18 +4,22 @@ import sys
 from setuptools import setup
 
 # dependences
-setup_requires = ['setuptools_scm', 'lxml']
+setup_requires = ['setuptools_scm']
 if sys.argv[-1] in ('sdist', 'bdist_wheel'):
     setup_requires.append('setuptools-markdown')
 
+install_requires = [
+    'lxml>=4.2.5',
+]
+
 setup(
     name = 'ldcv',
-    version = '0.0.1',
-    description = 'LangMan Console Version',
+    version = '1.0.0',
+    description = "LangMan Console Version",
     long_description = 'README.rst',
     author = 'leetking',
     author_email = 'li_tking@163.com',
-    url = 'https://github.com/leetking/ldcv',
+    url = "https://github.com/leetking/ldcv",
     license = 'GPL',
     package_dir = {'': 'src'},
     py_modules = ['ldcv'],
@@ -23,6 +27,7 @@ setup(
         'console_scripts': ['ldcv=ldcv:main'],
     },
     setup_requires = setup_requires,
+    install_requires = install_requires,
     use_scm_version = True,
     classifiers = [
         "Development Status :: 4 - Beta",
@@ -37,6 +42,7 @@ setup(
         "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
         "Topic :: Utilities",
     ],
 )
