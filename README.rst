@@ -24,7 +24,7 @@ Usage
      -f, --full            print verbose explanations. Default to print first
                            three explanations
      -j, --json            dump the explanation with JSON style
-     --cache CACHE         specify a word list file then cache words in it to
+     --cache CACHE         specify a word list file then cache words from it to
                            <cachefile>
      -c CONFIG, --config CONFIG
                            specify a config file

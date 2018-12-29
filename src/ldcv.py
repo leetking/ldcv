@@ -260,7 +260,7 @@ def arg_parse():
                         help = "dump the explanation with JSON style")
     parser.add_argument('--cache',
                         action = 'store',
-                        help = "specify a word list file then cache words in it to <cachefile>")
+                        help = "specify a word list file then cache words from it to <cachefile>")
     parser.add_argument('-c', '--config',
                         action = 'store',
                         help = "specify a config file")
