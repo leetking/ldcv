@@ -2,22 +2,22 @@
 # only work in python3
 
 import sys
-from sys import argv
-from urllib.request import urlopen
-from html.parser import HTMLParser
-from lxml import etree
-from itertools import count
-from argparse import ArgumentParser
-from functools import cmp_to_key
-
+import sqlite3
 import re
 import json
+import os
+from urllib.request import urlopen
+from itertools import count
+from argparse import ArgumentParser
+from configparser import ConfigParser
+from functools import cmp_to_key
+
+from lxml import etree
+
 
 URL = 'https://www.ldoceonline.com/dictionary/{0}'
 
-DEBUG = True
-
-options = None
+DEBUG = False
 
 def _D(fun = None, *args, **argv):
     if not DEBUG:
@@ -25,8 +25,27 @@ def _D(fun = None, *args, **argv):
     if callable(fun):
         fun(*args, **argv)
     else:
-        print(fun, *args, **argv)
+        print('[DEBUG] '+fun, *args, **argv)
 
+
+class OptionAndConfig:
+    """Save options from command line
+       and the configs from config file if specify
+    """
+    quiet = False
+    dbpath = '$HOME/.cache/ldcv/ldcv-cache.db3'
+    threads_max = 20
+    timeout = 7
+
+    _HOME = os.getenv('HOME')
+    _THREAD_MAX = 100
+    _TIMEOUT = 10*60    # 10 minutes
+
+    def __init__(self):
+        self.dbpath = self.dbpath.replace('$HOME', self._HOME)
+
+
+options = OptionAndConfig()
 
 def strip(s):
     """Remove redundant space characters
@@ -189,37 +208,90 @@ class OrderedNumber:
     def __getitem__(self, no):
         return ''.join([self.chars[int(x)] for x in str(no)])
 
+class DbCache:
+    def __init__(self, dbpath):
+        # TODO support Windows
+        # mkdir recursively the dbpath directory
+        directory = os.path.dirname(dbpath)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        self._db = sqlite3.connect(dbpath)
+        cur = self._db.cursor()
+        cur.execute("""create table if not exists `words`(
+            `word` text not null unique,
+            `explanation` blob not null,
+            primary key(`word`))""")
+        self._db.commit()
+        cur.close()
+
+    def __getitem__(self, word):
+        cur = self._db.cursor()
+        cur.execute("select `explanation` from `words` where `word` = ?", (word,))
+        exp = cur.fetchone()
+        cur.close()
+        try:
+            exp = json.loads(exp[0] if exp else None)
+        except TypeError or json.decoder.JSONDecodeError:
+            return None
+        return exp
+
+    def __setitem__(self, word, explanation):
+        cur = self._db.cursor()
+        cur.execute("insert into `words`(`word`,`explanation`) values(?, ?)",
+                (word, json.dumps(explanation, ensure_ascii=False)))
+        self._db.commit()
+        cur.close()
+
+    def close(self):
+        self._db.close()
+
 
 def arg_parse():
-    parser = ArgumentParser(description = "LongMan Console Version")
+    parser = ArgumentParser(prog='ldcv', description = "LongMan Console Version")
     parser.add_argument('-f', '--full',
                         action = 'store_true',
                         default = False,
                         help = "print verbose explanations. "
                                "Default to print first three explanations")
+    parser.add_argument('-j', '--json',
+                        action = 'store_true',
+                        default = False,
+                        help = "dump the explanation with JSON style")
+    parser.add_argument('--cache',
+                        action = 'store',
+                        help = "specify a word list file then cache words in it to <cachefile>")
+    parser.add_argument('-c', '--config',
+                        action = 'store',
+                        help = "specify a config file")
     parser.add_argument('--color',
                         choices = ['always', 'auto', 'never'],
                         default = 'auto',
                         help = "colorize the output. "
                                'Default to "auto" or can be "never" or "always"')
-    parser.add_argument('-j', '--json',
-                        action = 'store_true',
-                        default = False,
-                        help = "dump the explanation with JSON style")
     parser.add_argument('words',
                         nargs = '*',
                         help = "words or quoted phrases to lookup")
-    return parser.parse_args()
+    return parser.parse_args(namespace=options)
 
 
-def format_out_explanation(word):
+def format_out_explanation(exp):
     """format explanation from dict and print it
     """
+    # use in the inner for cache words
+    if options.quiet:
+        return
+
+    if options.json:
+        print(json.dumps(exp, ensure_ascii=False,indent=2, separators=(',', ': ')))
+        return
+
     _ = Colorizing.colorize
+    SENSE_MAX   = 7
     EXAMPLE_MAX = 3
 
-    print(_(word['word'], 'bold'))
-    fams = word['fams']
+    print(_(exp['word'], 'bold'))
+    fams = exp['fams']
     if fams:
         print("{0}: {1}".format(_("Word Families", 'yellow'), ", ".join(fams)))
 
@@ -236,12 +308,12 @@ def format_out_explanation(word):
             return (a['freq'] - b['freq'])
 
     SUPER = OrderedNumber('superscript')
-    for i, entry in enumerate(word['entries']):
-        print("{0}{1} {2} {3}".format(word['word'], SUPER[i+1],
+    for i, entry in enumerate(exp['entries']):
+        print("{0}{1} {2} {3}".format(exp['word'], SUPER[i+1],
             _(entry['attr'], 'on_green'), _(entry['pron'], '')))
         for i, sense in enumerate(sorted(entry['senses'],
                             key=cmp_to_key(sense_cmp))):
-            if options.full or sense['def'] != '':
+            if options.full or (sense['def'] != '' and i < SENSE_MAX):
                 print(" {}. ".format(i+1), end='')
                 if sense['attr'] != '':
                     print("[{}] ".format(_(sense['attr'], 'green')), end='')
@@ -266,6 +338,9 @@ def format_out_explanation(word):
 
 
 def format_out_suggestion(sugg):
+    # use in the inner for cache words
+    if options.quiet:
+        return
     _ = Colorizing.colorize
     print('{0} {1}'.format(_(sugg['word'], 'bold'), _('not found', 'red')))
     print('{0} {1}'.format(_('Did you mean:', 'green'), ', '.join(sugg['suggestions'])))
@@ -280,15 +355,34 @@ def page_no_results(html):
 
 
 def format_out_sorry_page(word):
+    # use in the inner for cache words
+    if options.quiet:
+        return
     _ = Colorizing.colorize
     print('{0} {1}'.format(_("Sorry, there are no results for", 'red'), _(word, 'bold')))
 
 
 def lookup_word(word):
+    if os.path.exists(options.dbpath) \
+            and not os.path.isfile(options.dbpath):
+        print("dbcache file has existed and isn't a regular file.")
+        return 1
+    dbcache = DbCache(options.dbpath)
+    exp = dbcache[word]
+    if exp:
+        format_out_explanation(exp)
+        dbcache.close()
+        return 0
+
     try:
-        data = urlopen(URL.format(word))
-    except IOError:
+        data = urlopen(URL.format(word), timeout=options.timeout)
+    except OSError:
         print("Network is unavailable")
+        dbcache.close()
+        return 1
+    except TimeoutError:
+        print("Opening URL timeout")
+        dbcache.close()
         return 1
     ctx = data.read().decode("utf-8")
     html = etree.HTML(ctx)
@@ -301,11 +395,12 @@ def lookup_word(word):
     elif suggestion is not None:
         format_out_suggestion(suggestion)
     else:
-        word = parse_word(html)
-        if options.json:
-            print(json.dumps(word, ensure_ascii=False))
-        else:
-            format_out_explanation(word)
+        exp = parse_word(html)
+        # cache this word
+        dbcache[word] = exp
+        format_out_explanation(exp)
+    dbcache.close()
+    return 0
 
 def interaction():
     """interactional mode
@@ -318,14 +413,15 @@ def interaction():
     while True:
         try:
             word = input('> ').strip()
-            if word in ('/full'):
-                options.full = True
-                print('verbose explanations on')
-            elif word in ('/~full'):
-                options.full = False
-                print('verbose explanations off')
-            elif word in ('/q', '/quit'):
-                break
+            if word.startswith('/'):
+                if word in ('/full'):
+                    options.full = True
+                    print('verbose explanations on')
+                elif word in ('/!full', '/~full'):
+                    options.full = False
+                    print('verbose explanations off')
+                elif word in ('/q', '/quit'):
+                    break
             else:
                 lookup_word(word)
         except KeyboardInterrupt:
@@ -335,11 +431,95 @@ def interaction():
             break
     print("Bye")
 
+
+def cache_words(wordsfile):
+    from time import time
+    from threading import Thread
+
+    threads_max = options.threads_max
+
+    words = []
+    with open(wordsfile) as cf:
+        for line in cf:
+            ws = [strip(x) for x in re.split('[,;|\n]+', line)]
+            words = words+[x for x in ws if x != '']
+
+    print("caching {} words with {} threads.".format(len(words), threads_max))
+    options.quiet = True
+    start = time()
+    def thread_lookup_word(words):
+        for w in words:
+            lookup_word(w)
+    portion_size = len(words) // threads_max
+    tasks = []
+    for i in range(0, len(words), portion_size):
+        ws = words[i:i+portion_size]
+        thread = Thread(target=thread_lookup_word,
+                    name="quering words({}~{})".format(i, i+portion_size), args=(ws,))
+        thread.start()
+        tasks.append(thread)
+    for t in tasks:
+        t.join()
+    end = time()
+    elapse = end-start
+    print("cache {} word(s) and the total time "
+            "is {:.2f}s, average time {:0.2f}/s with {} threads.".format(
+              len(words), elapse, len(words)/elapse, threads_max))
+
+
+def parse_config(config):
+    """parse config file according to the order `/etc/ldcv/ldcvrc',
+       `$HOME/.config/ldcv/ldcvrc', `./ldcvrc' and @config, and the later
+       will overwrite the prevoius
+    """
+    global options
+    RCLIST = ('/etc/ldcv/ldcvrc', options._HOME+'/.config/ldcv/ldcvrc',
+            './ldcvrc', config or '')
+    cfg = ConfigParser()
+    for rc in RCLIST:
+        if not os.path.isfile(rc):
+            continue
+        cfg.read(rc)
+        # parse `main' section
+        if 'main' in cfg and 'full' in cfg['main']:
+            options.full = cfg['main'].getboolean('full')
+        # parse `cache` section
+        if 'cache' in cfg:
+            cache = cfg['cache']
+            if 'dbpath' in cache:
+                path = cache['dbpath'].replace('$HOME', options._HOME)
+                cwd = os.getcwd()
+                # absolute path, evaluate directly
+                if path.startswith('/'):
+                    options.dbpath = path
+                # relative path, add prefix the current word directory
+                else:
+                    options.dbpath = cwd+'/'+path
+            if 'threads-max' in cache:
+                # 2 ~ options._THREAD_MAX
+                tmax = max(2, int(cache['threads-max']))
+                options.threads_max = min(tmax, options._THREAD_MAX)
+        # parse `net` section
+        if 'net' in cfg:
+            net = cfg['net']
+            if 'timeout' in net:
+                tout = max(3, int(net['timeout']))
+                options.timeout = min(tout, options._TIMEOUT)
+    _D("main.full    = {}".format(options.full))
+    _D("cache.dbpath = {}".format(options.dbpath))
+    _D("cache.threads-max = {}".format(options.threads_max))
+    _D("net.timeout  = {}".format(options.timeout))
+
+
 def main():
     global options
     options = arg_parse()
 
-    if options.words:
+    parse_config(options.config)
+
+    if options.cache:
+        cache_words(options.cache)
+    elif options.words:
         for word in options.words:
             lookup_word(word)
     else:

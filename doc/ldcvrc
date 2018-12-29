@@ -1,0 +1,16 @@
+[main]
+# show verbose explanations?
+#full = false
+
+[cache]
+# the file to cache the explanation of word
+# only support environment $HOME which means the user's home directory
+#dbpath = $HOME/.cache/ldcv/ldcv-cache.db3
+
+# the maximum threads to concurrently cache words from list file,
+# but be care of that the server ban you IP
+#threads-max = 20
+
+[net]
+# the maximum time to query a word, second
+#timeout = 7
