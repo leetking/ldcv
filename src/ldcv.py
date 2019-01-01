@@ -321,9 +321,9 @@ def format_out_explanation(exp):
                     print("{}  ".format(_(sense['signpost'].upper(), '~yellow')), end='')
                 print("{} ".format(_(sense['def'], 'cyan')), end='')
                 if sense['syn'] != '':
-                    print('{}: {} '.format(_('SYN', '~yellow'), sense['syn'], end=''))
+                    print('{}: {} '.format(_('SYN', '~yellow'), sense['syn']), end='')
                 if sense['opp'] != '':
-                    print('{}: {} '.format(_('OPP', '~yellow'), sense['opp'], end=''))
+                    print('{}: {} '.format(_('OPP', '~yellow'), sense['opp']), end='')
                 print('')
                 for i, example in enumerate(sense['examples']):
                     if options.full or i < EXAMPLE_MAX:
@@ -450,10 +450,12 @@ def cache_words(wordsfile):
     def thread_lookup_word(words):
         for w in words:
             lookup_word(w)
-    portion_size = len(words) // threads_max
+    portion_size = max(1, len(words) // threads_max)
     tasks = []
     for i in range(0, len(words), portion_size):
         ws = words[i:i+portion_size]
+        if not ws:
+            continue
         thread = Thread(target=thread_lookup_word,
                     name="quering words({}~{})".format(i, i+portion_size), args=(ws,))
         thread.start()

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ldcv"
-version = "2.0.0"
+version = "2.0.1"
 description = "LangMan Console Version"
 authors = ["leetking <li_tking@163.com>"]
 license = "GPL-3.0"
