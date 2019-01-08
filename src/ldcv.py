@@ -6,7 +6,9 @@ import sqlite3
 import re
 import json
 import os
+from urllib.error import URLError
 from urllib.request import urlopen
+from urllib.parse import quote
 from itertools import count
 from argparse import ArgumentParser
 from configparser import ConfigParser
@@ -19,7 +21,7 @@ URL = 'https://www.ldoceonline.com/dictionary/{0}'
 
 DEBUG = False
 
-def _D(fun = None, *args, **argv):
+def _D(fun=None, *args, **argv):
     if not DEBUG:
         return
     if callable(fun):
@@ -50,7 +52,7 @@ options = OptionAndConfig()
 def strip(s):
     """Remove redundant space characters
     """
-    return re.sub("[\s]+", ' ', s).strip() if isinstance(s, str) else ""
+    return re.sub(r"[\s]+", ' ', s).strip() if isinstance(s, str) else ''
 
 
 def parse_word_fams(wordfams):
@@ -59,7 +61,7 @@ def parse_word_fams(wordfams):
     return list(set(word for word in wordfams.xpath(".//@title")))
 
 
-def parse_sense(sense, freq = 1):
+def parse_sense(sense, freq=1):
     def _(exp):
         EMPTY_ELEMENT = etree.Element('_')
         eles = sense.find(exp)
@@ -68,9 +70,9 @@ def parse_sense(sense, freq = 1):
     def parse_examples():
         def mp3(ent):
             src = ent.find('.//span[@data-src-mp3]')
-            return src.attrib['data-src-mp3'] if src is not None else ""
+            return src.attrib['data-src-mp3'] if src is not None else ''
         return list({
-            'coll': ["", ""],
+            'coll': ['', ''],
             'example': [strip(''.join(example.itertext())), mp3(example)],
         } for example in sense.iterfind('.//span[@class="EXAMPLE"]'))
 
@@ -93,9 +95,9 @@ def parse_sense(sense, freq = 1):
         # example sentences
         'examples': parse_examples(),
         # phrases maybe?
-        'refs': list(x.strip() for x in re.split('[^ ()=/\'’\w-]+',
+        'refs': list(x.strip() for x in re.split(r'[^ ()=/\'’\w-]+',
                     ''.join(_('.//span[@class="Crossref"]').itertext())) \
-                        if x.strip() != ""),
+                        if x.strip() != ''),
     }
     return ret
 
@@ -108,14 +110,14 @@ def parse_entry(entry):
 
     def mp3(exp):
         src = entry.xpath(exp)
-        return src[0].attrib['data-src-mp3'] if src else ""
+        return src[0].attrib['data-src-mp3'] if src else ''
 
     ret = {
         'pron': ''.join(_('.//span[@class="PronCodes"]').itertext()).strip(),
         'attr': strip(_('.//span[@class="POS"]').text),
         'audio-br': mp3('.//span[contains(@class, "brefile")]'),
         'audio-us': mp3('.//span[contains(@class, "amefile")]'),
-        'senses': [parse_sense(sense, i+1) for i, sense in enumerate(entry.iterfind('.//span[@class="Sense"]'))]
+        'senses': [parse_sense(sense, i) for i, sense in enumerate(entry.iterfind('.//span[@class="Sense"]'), 1)]
     }
     return ret
 
@@ -248,30 +250,30 @@ class DbCache:
 
 
 def arg_parse():
-    parser = ArgumentParser(prog='ldcv', description = "LongMan Console Version")
+    parser = ArgumentParser(prog='ldcv', description="LongMan Console Version")
     parser.add_argument('-f', '--full',
-                        action = 'store_true',
-                        default = False,
-                        help = "print verbose explanations. "
-                               "Default to print first three explanations")
+                        action='store_true',
+                        default=False,
+                        help="print verbose explanations. "
+                             "Default to print first three explanations")
     parser.add_argument('-j', '--json',
-                        action = 'store_true',
-                        default = False,
-                        help = "dump the explanation with JSON style")
+                        action='store_true',
+                        default=False,
+                        help="dump the explanation with JSON style")
     parser.add_argument('--cache',
-                        action = 'store',
-                        help = "specify a word list file then cache words from it to <cachefile>")
+                        action='store',
+                        help="specify a word list file then cache words from it to <cachefile>")
     parser.add_argument('-c', '--config',
-                        action = 'store',
-                        help = "specify a config file")
+                        action='store',
+                        help="specify a config file")
     parser.add_argument('--color',
-                        choices = ['always', 'auto', 'never'],
-                        default = 'auto',
-                        help = "colorize the output. "
-                               'Default to "auto" or can be "never" or "always"')
+                        choices=['always', 'auto', 'never'],
+                        default='auto',
+                        help="colorize the output. "
+                             'Default to "auto" or can be "never" or "always"')
     parser.add_argument('words',
-                        nargs = '*',
-                        help = "words or quoted phrases to lookup")
+                        nargs='*',
+                        help="words or quoted phrases to lookup")
     return parser.parse_args(namespace=options)
 
 
@@ -288,6 +290,7 @@ def format_out_explanation(exp):
 
     _ = Colorizing.colorize
     SENSE_MAX   = 7
+    SENSE_MIN   = 3
     EXAMPLE_MAX = 3
 
     print(_(exp['word'], 'bold'))
@@ -308,26 +311,30 @@ def format_out_explanation(exp):
             return (a['freq'] - b['freq'])
 
     SUPER = OrderedNumber('superscript')
-    for i, entry in enumerate(exp['entries']):
-        print("{0}{1} {2} {3}".format(exp['word'], SUPER[i+1],
-            _(entry['attr'], 'on_green'), _(entry['pron'], '')))
+    for i, entry in enumerate(exp['entries'], 1):
+        attr = ''
+        if entry['attr'] != '':
+            attr = " {} ".format(_(entry['attr'], 'on_green'))
+        pron = entry['pron'] if entry['pron'] != '//' else ''
+        print("{0}{1}{2}{3}".format(exp['word'], SUPER[i], attr, pron))
         for i, sense in enumerate(sorted(entry['senses'],
-                            key=cmp_to_key(sense_cmp))):
-            if options.full or (sense['def'] != '' and i < SENSE_MAX):
-                print(" {}. ".format(i+1), end='')
+                            key=cmp_to_key(sense_cmp)), 1):
+            if options.full or (sense['def'] != '' and i < SENSE_MAX) \
+                    or (sense['def'] == '' and i < SENSE_MIN):
+                print(" {}.".format(i), end='')
                 if sense['attr'] != '':
-                    print("[{}] ".format(_(sense['attr'], 'green')), end='')
+                    print(" [{}]".format(_(sense['attr'], 'green')), end='')
                 if sense['signpost'] != '':
-                    print("{}  ".format(_(sense['signpost'].upper(), '~yellow')), end='')
-                print("{} ".format(_(sense['def'], 'cyan')), end='')
+                    print(" {} ".format(_(sense['signpost'].upper(), '~yellow')), end='')
+                print(" {}".format(_(sense['def'], 'cyan')), end='')
                 if sense['syn'] != '':
-                    print('{}: {} '.format(_('SYN', '~yellow'), sense['syn']), end='')
+                    print(' {}: {}'.format(_('SYN', '~yellow'), sense['syn']), end='')
                 if sense['opp'] != '':
-                    print('{}: {} '.format(_('OPP', '~yellow'), sense['opp']), end='')
+                    print(' {}: {}'.format(_('OPP', '~yellow'), sense['opp']), end='')
                 print('')
-                for i, example in enumerate(sense['examples']):
+                for i, example in enumerate(sense['examples'], 1):
                     if options.full or i < EXAMPLE_MAX:
-                        print("     ➤ {1}".format(i+1, example['example'][0]))
+                        print("     ➤ {1}".format(i, example['example'][0]))
                     else:
                         break
                 if sense['refs']:
@@ -350,7 +357,7 @@ def page_no_results(html):
     h1 = html.find('.//h1[@class="search_title"]')
     if h1 is None:
         return False
-    title = "".join(h1.itertext()).lower()
+    title = ''.join(h1.itertext()).lower()
     return ("sorry" in title and "no" in title)
 
 
@@ -365,8 +372,11 @@ def format_out_sorry_page(word):
 def lookup_word(word):
     if os.path.exists(options.dbpath) \
             and not os.path.isfile(options.dbpath):
-        print("dbcache file has existed and isn't a regular file.")
+        print("dbcache file has existed at {} "
+              "and isn't a regular file.".format(options.dbpath))
         return 1
+    # prepare this word, maybe this is a feasible idea
+    word = strip(word.lower()).replace(' ', '-')
     dbcache = DbCache(options.dbpath)
     exp = dbcache[word]
     if exp:
@@ -375,19 +385,22 @@ def lookup_word(word):
         return 0
 
     try:
-        data = urlopen(URL.format(word), timeout=options.timeout)
+        data = urlopen(URL.format(quote(word)), timeout=options.timeout)
+    except URLError as e:
+        if 'timed out' in str(e.reason):
+            print("Network timed out in {}s".format(options.timeout))
+        else:
+            print(e.reason)
+        dbcache.close()
+        return 1
     except OSError:
         print("Network is unavailable")
         dbcache.close()
         return 1
-    except TimeoutError:
-        print("Opening URL timeout")
-        dbcache.close()
-        return 1
     ctx = data.read().decode("utf-8")
     html = etree.HTML(ctx)
-    suggestion = page_didyoumean(html, word)
 
+    suggestion = page_didyoumean(html, word)
     # the page `sorry' means that the word is random letters
     if page_no_results(html):
         format_out_sorry_page(word)
@@ -422,7 +435,7 @@ def interaction():
                     print('verbose explanations off')
                 elif word in ('/q', '/quit'):
                     break
-            else:
+            elif word != '':
                 lookup_word(word)
         except KeyboardInterrupt:
             print()
@@ -492,11 +505,11 @@ def parse_config(config):
                 path = cache['dbpath'].replace('$HOME', options._HOME)
                 cwd = os.getcwd()
                 # absolute path, evaluate directly
-                if path.startswith('/'):
+                if os.path.isabs(path):
                     options.dbpath = path
                 # relative path, add prefix the current word directory
                 else:
-                    options.dbpath = cwd+'/'+path
+                    options.dbpath = os.path.join(cwd, path)
             if 'threads-max' in cache:
                 # 2 ~ options._THREAD_MAX
                 tmax = max(2, int(cache['threads-max']))

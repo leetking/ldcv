@@ -41,8 +41,8 @@ Installation
    $ pip install ldcv
 
 
-Enviroment or dependences
--------------------------
+Environment or dependences
+--------------------------
 
 - Python (3.x)
 - lxml_
