@@ -447,7 +447,7 @@ def interaction():
 
 def cache_words(wordsfile):
     from time import time
-    from threading import Thread
+    from multiprocessing import Process
 
     threads_max = options.threads_max
 
@@ -469,7 +469,7 @@ def cache_words(wordsfile):
         ws = words[i:i+portion_size]
         if not ws:
             continue
-        thread = Thread(target=thread_lookup_word,
+        thread = Process(target=thread_lookup_word,
                     name="quering words({}~{})".format(i, i+portion_size), args=(ws,))
         thread.start()
         tasks.append(thread)
