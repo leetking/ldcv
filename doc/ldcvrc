@@ -12,5 +12,5 @@
 #threads-max = 20
 
 [net]
-# the maximum time to query a word, second
+# the maximum time to query a word, the unit is second
 #timeout = 7

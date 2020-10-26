@@ -1,33 +1,27 @@
-#!/usr/bin/env python
-# only work in python3
+#!/usr/bin/env python3
 
 import sys
-import sqlite3
 import re
 import json
 import os
+import sqlite3
+import socket
+
+from itertools import count
+from functools import cmp_to_key
+from argparse import ArgumentParser
+from configparser import ConfigParser
+from pathlib import Path
+from contextlib import closing
 from urllib.error import URLError
 from urllib.request import urlopen
 from urllib.parse import quote
-from itertools import count
-from argparse import ArgumentParser
-from configparser import ConfigParser
-from functools import cmp_to_key
 
 from lxml import etree
 
+_VERSION = '2.0.4'
 
-URL = 'https://www.ldoceonline.com/dictionary/{0}'
-
-DEBUG = False
-
-def _D(fun=None, *args, **argv):
-    if not DEBUG:
-        return
-    if callable(fun):
-        fun(*args, **argv)
-    else:
-        print('[DEBUG] '+fun, *args, **argv)
+MAIN_URL = 'https://www.ldoceonline.com/dictionary/{0}'
 
 
 class OptionAndConfig:
@@ -194,7 +188,7 @@ class Colorizing:
             return s
         if color is None:
             return s
-        colors = ''.join(cls.colors[x] for x in color.split(',') if x in cls.colors.keys())
+        colors = ''.join(cls.colors[x] for x in color.split(',') if x in cls.colors)
         return "{0}{1}{2}".format(colors, s, cls.colors['default'])
 
 
@@ -205,12 +199,12 @@ class OrderedNumber:
     }
 
     def __init__(self, _type='number'):
-        self.chars = self.list_chars[_type] if _type in self.list_chars.keys() else self.list_chars['number']
+        self.chars = self.list_chars[_type] if _type in self.list_chars else self.list_chars['number']
 
     def __getitem__(self, no):
         return ''.join([self.chars[int(x)] for x in str(no)])
 
-class DbCache:
+class DbAdapter:
     def __init__(self, dbpath):
         # TODO support Windows
         # mkdir recursively the dbpath directory
@@ -219,19 +213,20 @@ class DbCache:
             os.makedirs(directory)
 
         self._db = sqlite3.connect(dbpath)
-        cur = self._db.cursor()
-        cur.execute("""create table if not exists `words`(
-            `word` text not null unique,
-            `explanation` blob not null,
-            primary key(`word`))""")
-        self._db.commit()
-        cur.close()
+        with closing(self._db.cursor()) as cur:
+            cur.execute("""create table if not exists `words`(
+                `word` text not null unique,
+                `explanation` blob not null,
+                primary key(`word`))""")
+            self._db.commit()
 
     def __getitem__(self, word):
-        cur = self._db.cursor()
-        cur.execute("select `explanation` from `words` where `word` = ?", (word,))
-        exp = cur.fetchone()
-        cur.close()
+        if not isinstance(word, str):
+            return None
+
+        with closing(self._db.cursor()) as cur:
+            cur.execute("select `explanation` from `words` where `word` = ?", (word,))
+            exp = cur.fetchone()
         try:
             exp = json.loads(exp[0] if exp else None)
         except TypeError or json.decoder.JSONDecodeError:
@@ -239,11 +234,16 @@ class DbCache:
         return exp
 
     def __setitem__(self, word, explanation):
-        cur = self._db.cursor()
-        cur.execute("insert into `words`(`word`,`explanation`) values(?, ?)",
-                (word, json.dumps(explanation, ensure_ascii=False)))
-        self._db.commit()
-        cur.close()
+        with closing(self._db.cursor()) as cur:
+            cur.execute("insert into `words`(`word`,`explanation`) values(?, ?)",
+                    (word, json.dumps(explanation, ensure_ascii=False)))
+            self._db.commit()
+
+    def get_all_cached_words(self):
+        with closing(self._db.cursor()) as cur:
+            cur.execute("select `word` from `words`")
+            words = cur.fetchall()
+            return (word[0] for word in words)
 
     def close(self):
         self._db.close()
@@ -263,6 +263,9 @@ def arg_parse():
     parser.add_argument('--cache',
                         action='store',
                         help="specify a word list file then cache words from it to <cachefile>")
+    parser.add_argument('--merge',
+                        action='store',
+                        help="specify other <cachefiles> so merge the word and explanation to this <cachefile>")
     parser.add_argument('-c', '--config',
                         action='store',
                         help="specify a config file")
@@ -314,7 +317,7 @@ def format_out_explanation(exp):
     for i, entry in enumerate(exp['entries'], 1):
         attr = ''
         if entry['attr'] != '':
-            attr = " {} ".format(_(entry['attr'], 'on_green'))
+            attr = " {} ".format(_(entry['attr'], 'green'))
         pron = entry['pron'] if entry['pron'] != '//' else ''
         print("{0}{1}{2}{3}".format(exp['word'], SUPER[i], attr, pron))
         for i, sense in enumerate(sorted(entry['senses'],
@@ -325,12 +328,12 @@ def format_out_explanation(exp):
                 if sense['attr'] != '':
                     print(" [{}]".format(_(sense['attr'], 'green')), end='')
                 if sense['signpost'] != '':
-                    print(" {} ".format(_(sense['signpost'].upper(), '~yellow')), end='')
+                    print(" {} ".format(_(sense['signpost'].upper(), 'yellow')), end='')
                 print(" {}".format(_(sense['def'], 'cyan')), end='')
                 if sense['syn'] != '':
-                    print(' {}: {}'.format(_('SYN', '~yellow'), sense['syn']), end='')
+                    print(' {}: {}'.format(_('SYN', 'yellow'), sense['syn']), end='')
                 if sense['opp'] != '':
-                    print(' {}: {}'.format(_('OPP', '~yellow'), sense['opp']), end='')
+                    print(' {}: {}'.format(_('OPP', 'yellow'), sense['opp']), end='')
                 print('')
                 for i, example in enumerate(sense['examples'], 1):
                     if options.full or i < EXAMPLE_MAX:
@@ -377,25 +380,22 @@ def lookup_word(word):
         return 1
     # prepare this word, maybe this is a feasible idea
     word = strip(word.lower()).replace(' ', '-')
-    dbcache = DbCache(options.dbpath)
-    exp = dbcache[word]
+    db = DbAdapter(options.dbpath)
+    exp = db[word]
     if exp:
         format_out_explanation(exp)
-        dbcache.close()
+        db.close()
         return 0
 
     try:
-        data = urlopen(URL.format(quote(word)), timeout=options.timeout)
-    except URLError as e:
-        if 'timed out' in str(e.reason):
-            print("Network timed out in {}s".format(options.timeout))
-        else:
-            print(e.reason)
-        dbcache.close()
+        data = urlopen(MAIN_URL.format(quote(word)), timeout=options.timeout)
+    except socket.timeout:
+        print("Network timed out in {}s".format(options.timeout))
+        db.close()
         return 1
     except OSError:
         print("Network is unavailable")
-        dbcache.close()
+        db.close()
         return 1
     ctx = data.read().decode("utf-8")
     html = etree.HTML(ctx)
@@ -410,15 +410,15 @@ def lookup_word(word):
     else:
         exp = parse_word(html)
         # cache this word
-        dbcache[word] = exp
+        db[word] = exp
         format_out_explanation(exp)
-    dbcache.close()
+    db.close()
     return 0
 
 def interaction():
     """interactional mode
     """
-    print('LongMan Console Version')
+    print('LongMan Console Version. type /help to get help.')
     try:
         import readline
     except ImportError:
@@ -433,6 +433,14 @@ def interaction():
                 elif word in ('/!full', '/~full'):
                     options.full = False
                     print('verbose explanations off')
+                elif word in ('/v', '/version'):
+                    print('v{}'.format(_VERSION))
+                elif word in ('/h', '/help'):
+                    print('/full            turn on verbose explanation\n'
+                          '/!full, /~full   turn off verbose explanation\n'
+                          '/h, /help        show this page\n'
+                          '/v, /version     show version\n'
+                          '/q, /quit        exit programm')
                 elif word in ('/q', '/quit'):
                     break
             elif word != '':
@@ -453,9 +461,7 @@ def cache_words(wordsfile):
 
     words = []
     with open(wordsfile) as cf:
-        for line in cf:
-            ws = [strip(x) for x in re.split('[,;|\n]+', line)]
-            words = words+[x for x in ws if x != '']
+        words = [strip(word) for line in cf for word in re.split('[,;|\n]+', line) if strip(word) != '']
 
     print("caching {} words with {} threads.".format(len(words), threads_max))
     options.quiet = True
@@ -480,6 +486,20 @@ def cache_words(wordsfile):
     print("cache {} word(s) and the total time "
             "is {:.2f}s, average time {:0.2f}/s with {} threads.".format(
               len(words), elapse, len(words)/elapse, threads_max))
+
+def merge_db(otherdb):
+    count = 0
+    todb = DbAdapter(options.dbpath)
+    fromdb = DbAdapter(otherdb)
+    print(f"merge {otherdb} into dbcache locating at {options.dbpath} ...")
+    for word in fromdb.get_all_cached_words():
+        if not todb[word]:
+            print(f"merge {word} into dbcache")
+            todb[word] = fromdb[word]
+            count += 1
+    fromdb.close()
+    todb.close()
+    print(f"merge {otherdb} into dbcache over with amount of {count}")
 
 
 def parse_config(config):
@@ -520,10 +540,6 @@ def parse_config(config):
             if 'timeout' in net:
                 tout = max(3, int(net['timeout']))
                 options.timeout = min(tout, options._TIMEOUT)
-    _D("main.full    = {}".format(options.full))
-    _D("cache.dbpath = {}".format(options.dbpath))
-    _D("cache.threads-max = {}".format(options.threads_max))
-    _D("net.timeout  = {}".format(options.timeout))
 
 
 def main():
@@ -534,6 +550,8 @@ def main():
 
     if options.cache:
         cache_words(options.cache)
+    elif options.merge:
+        merge_db(options.merge)
     elif options.words:
         for word in options.words:
             lookup_word(word)
